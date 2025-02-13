@@ -56,19 +56,23 @@ class AlohaMinkWrapper:
         l_wrist_geoms = mink.get_subtree_geom_ids(self.model, self.model.body("left/wrist_link").id)
         r_wrist_geoms = mink.get_subtree_geom_ids(self.model, self.model.body("right/wrist_link").id)
 
-        l_geoms = mink.get_subtree_geom_ids(self.model, self.model.body("left/upper_arm_link").id)
-        r_geoms = mink.get_subtree_geom_ids(self.model, self.model.body("right/upper_arm_link").id)
+        l_geoms = mink.get_subtree_geom_ids(self.model, self.model.body("left/wrist_link").id)
+        r_geoms = mink.get_subtree_geom_ids(self.model, self.model.body("right/wrist_link").id)
         frame_geoms = mink.get_body_geom_ids(self.model, self.model.body("metal_frame").id)
-
+        object_geoms = mink.get_body_geom_ids(self.model, self.model.body("object").id)
+        all_geoms = l_wrist_geoms + r_wrist_geoms + l_geoms + r_geoms + frame_geoms
         collision_pairs = [
-            (l_wrist_geoms, r_wrist_geoms),
-            (l_geoms + r_geoms, frame_geoms + ["table"]),
+            # (l_wrist_geoms+r_wrist_geoms, object_geoms),
+            # (l_geoms + r_geoms, frame_geoms + ["table"]),
+            # # (all_geoms, all_geoms),
         ]
         return mink.CollisionAvoidanceLimit(
             model=self.model,
+            # gain=1e-2,
             geom_pairs=collision_pairs,  # type: ignore
-            minimum_distance_from_collisions=0.05,
-            collision_detection_distance=0.05,
+            # minimum_distance_from_collisions=0.05,
+            # collision_detection_distance=0.05,
+            bound_relaxation=0.05,
         )
 
     def get_joint_and_velocity_limits(self):

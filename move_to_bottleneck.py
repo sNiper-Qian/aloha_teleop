@@ -13,6 +13,7 @@ import threading
 import queue
 import os
 import copy
+import time
 
 
 _HERE = Path(__file__).parent
@@ -61,7 +62,7 @@ def compute_approach_pose(goal, offset_distance=0.07):
     # The approach vector (assuming z-axis of the rotation matrix is forward)
     approach_vector = rotation_matrix[:, 2]  # Z-axis of the rotation matrix
     approach_vector[1] *= -1
-    print(approach_vector)
+    # print(approach_vector)
     # Offset the position by the approach vector scaled by the distance
     approach_position = position - approach_vector * offset_distance
     
@@ -82,7 +83,8 @@ def move_to_object():
     quat_scalar_first = np.roll(quat, shift=1)
     goal.wxyz_xyz[0:4] = quat_scalar_first 
 
-    aloha_mink_wrapper.tasks[0].set_target(compute_approach_pose(goal))
+    pre_grasp_pose = compute_approach_pose(goal, 0)
+    aloha_mink_wrapper.tasks[0].set_target(pre_grasp_pose)
     aloha_mink_wrapper.tasks[1].set_target(mink.SE3.from_mocap_name(model, data, "right/target"))
     
     # Solve inverse kinematics
@@ -91,8 +93,51 @@ def move_to_object():
     # Apply the calculated joint positions to actuators
     data.ctrl[aloha_mink_wrapper.actuator_ids] = aloha_mink_wrapper.configuration.q[aloha_mink_wrapper.dof_ids]
 
+def move_to_pre_grasp_pose(offset_distance):
+    """Move the gripper to align with the pre-grasp position."""
+    global theta
+    mink.move_mocap_to_frame(model, data, "left/target", "handle_site", "site")
 
-def is_gripper_near_object(vel_threshold=0.5, dis_threshold=0.3):
+    # Update task targets
+    goal = mink.SE3.from_mocap_name(model, data, "left/target")
+    goal.wxyz_xyz[-1] -= 0.02
+    quat = R.from_euler('xyz', [0, np.pi / 4, theta], degrees=False).as_quat()
+    quat_scalar_first = np.roll(quat, shift=1)
+    goal.wxyz_xyz[0:4] = quat_scalar_first 
+
+    global pre_grasp_pose
+    pre_grasp_pose = compute_approach_pose(goal, offset_distance)
+    aloha_mink_wrapper.tasks[0].set_target(pre_grasp_pose)
+    aloha_mink_wrapper.tasks[1].set_target(mink.SE3.from_mocap_name(model, data, "right/target"))
+    
+    # Solve inverse kinematics
+    aloha_mink_wrapper.solve_ik(rate.dt)
+
+    # Apply the calculated joint positions to actuators
+    data.ctrl[aloha_mink_wrapper.actuator_ids] = aloha_mink_wrapper.configuration.q[aloha_mink_wrapper.dof_ids]
+
+def is_gripper_pre_grasp(vel_threshold=2, dis_threshold=0.25):
+    """Check if the gripper is close to the pre-grasp position."""
+    global pre_grasp_pose
+    goal_position = pre_grasp_pose.wxyz_xyz[4:]
+    goal_orientation = pre_grasp_pose.wxyz_xyz[0:4]
+    gripper_position = data.xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/gripper")]
+    gripper_orientation = data.xquat[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/gripper")]
+
+    # Compute the distance between the current and goal positions
+    distance = np.linalg.norm(goal_position - gripper_position)
+    orientation_error = np.dot(goal_orientation, gripper_orientation)
+    orientation_error = np.clip(orientation_error, -1.0, 1.0)
+    orientation_error = 1 - np.abs(orientation_error)
+    
+    qvel_raw = data.qvel.copy()
+    left_qvel_raw = qvel_raw[:8]
+    sum_of_vel = np.sum(np.abs(left_qvel_raw))
+    
+    print(sum_of_vel, distance, orientation_error)
+    return sum_of_vel < vel_threshold and distance < dis_threshold
+
+def is_gripper_near_object(vel_threshold=5, dis_threshold=0.3):
     """Check if the gripper is close enough to the object."""
     object_position = data.xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "handle_site")]
     gripper_position = data.xpos[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/gripper")]
@@ -208,6 +253,7 @@ if __name__ == "__main__":
             # Rate limiter for fixed update frequency
             rate = RateLimiter(frequency=100, warn=False)
 
+            pre_grasped = False
             has_grasped = False
             gripper_closed = False
             object_lifted = False
@@ -215,15 +261,26 @@ if __name__ == "__main__":
             try:
                 while viewer.is_running():
                     # Render 
+                    start = time.time()
                     renderer.update_scene(data, camera="wrist_cam_right")
                     img = renderer.render()
+                    end = time.time()
+                    print(f"Render time: {end - start}")
 
                     if not img_queue.full():
                         img_queue.put(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
 
-                    continue
-                
-                    if not has_grasped:
+                    start = time.time()
+                    if not pre_grasped:
+                        # Move the gripper to the pre-grasp position
+                        move_to_pre_grasp_pose(0)
+
+                        # Check if the gripper is close to the pre-grasp position
+                        if is_gripper_pre_grasp():
+                            print("Pre-grasp position reached. Moving to object...")
+                            pre_grasped = True
+
+                    elif not has_grasped:
                         # Align gripper with the object
                         move_to_object()
 
@@ -255,15 +312,21 @@ if __name__ == "__main__":
                             sample_object_position(data, model)
 
                             # Reset flags for the next cycle
+                            pre_grasped = False
                             has_grasped = False
                             gripper_closed = False
                             object_lifted = False
+                    end = time.time()
+                    print(f"IK Time taken: {end - start}")
 
+                    start = time.time()
                     # Compensate gravity
                     aloha_mink_wrapper.compensate_gravity([model.body("left/base_link").id, model.body("right/base_link").id])
 
                     # Step the simulation
                     mujoco.mj_step(model, data)
+                    end = time.time()
+                    print(f"Step time: {end - start}")
 
                     # Visualize at fixed FPS
                     viewer.sync()

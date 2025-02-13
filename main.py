@@ -183,17 +183,63 @@ def display_image(img_queue, running_event):
         except Exception as e:
             print(f"Error saving image: {e}")
 
+def set_object_pose(data, model):
+    """Set the object pose to a random position."""
+    # 1. Get the joint ID of the object's free joint. In your XML, you might name it e.g. <freejoint name="object_free_joint" />.
+    #    If the object body doesn't have a named joint, you need to name it or find another way to get the correct ID.
+    joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "object_free_joint")
+    
+    # 2. Get the index in qpos where this free joint's data starts.
+    #    For a free joint, the next 7 values of qpos are [x, y, z, qw, qx, qy, qz].
+    qpos_adr = model.jnt_qposadr[joint_id]
+    
+    # 3. Generate random x,y positions, fix z, and generate a random rotation around z-axis
+    x = np.random.uniform(-0.1, 0.1)
+    y = np.random.uniform(-0.1, 0.1)
+    z = 0  # e.g., slightly above the table
+    quat = R.from_euler('z', np.random.uniform(0, 2*np.pi)).as_quat()  # [qx, qy, qz, qw]
+    
+    # 4. Assign these to data.qpos.
+    #    The order for a free joint in MuJoCo is [x, y, z, qw, qx, qy, qz].
+    data.qpos[qpos_adr + 0] = x
+    data.qpos[qpos_adr + 1] = y
+    data.qpos[qpos_adr + 2] = z
+    data.qpos[qpos_adr + 3] = quat[3]  # qw
+    data.qpos[qpos_adr + 4] = quat[0]  # qx
+    data.qpos[qpos_adr + 5] = quat[1]  # qy
+    data.qpos[qpos_adr + 6] = quat[2]  # qz
+    
+    # 5. Recompute positions/orientations from joint values
+    mujoco.mj_forward(model, data)
 
 if __name__ == "__main__":
     # Load the Mujoco model and data
     model = mujoco.MjModel.from_xml_path(str(_XML))
     data = mujoco.MjData(model)
 
+    # # list all the joints in the model
+    # for i in range(model.njnt):
+    #     print(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, i))
+
+    # # list all the bodies in the model
+    # for i in range(model.nbody):
+    #     print(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, i))
+    
+    # # list all the sites in the model
+    # for i in range(model.nsite):
+    #     print(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SITE, i))
+
     # Initialize the aloha_mink_wrapper
     aloha_mink_wrapper = AlohaMinkWrapper(model, data)
 
     # Initialize to the neutral pose
     initialize_scene(data, model)
+
+    # set the object pose
+    set_object_pose(data, model)
+
+    # update the model and data
+    mujoco.mj_forward(model, data)
 
     renderer = mujoco.Renderer(model, 480, 640)
     
@@ -236,13 +282,8 @@ if __name__ == "__main__":
                     if not img_queue.full():
                         img_queue.put(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
                 
-                    if not has_moved_to_optimal_view:
-                        move_to_optimal_view()
-
-                        # Check if gripper has reached the optimal view
-                        if is_gripper_at_optimal_view():
-                            print("optimal view reached.")
-                            has_moved_to_optimal_view = True
+                    if False:
+                        continue
 
                     elif not has_grasped:
                         # Align gripper with the object

@@ -30,26 +30,26 @@
       </default>
       <default class="shoulder">
         <joint range="-1.85005 1.25664" armature="0.395" frictionloss="2.0" damping="20.0" actuatorfrcrange="-144 144"/>
-        <position ctrlrange="-1.85005 1.25664" kp="265"/>
+        <position ctrlrange="-1.85005 1.25664" kp="100"/>
       </default>
       <default class="elbow">
         <joint range="-1.76278 1.6057" armature="0.383" frictionloss="1.15" damping="18.49" actuatorfrcrange="-59 59"/>
-        <position ctrlrange="-1.76278 1.6057" kp="227"/>
+        <position ctrlrange="-1.76278 1.6057" kp="117"/>
       </default>
       <default class="forearm_roll">
         <joint axis="1 0 0" range="-3.14158 3.14158" armature="0.14" damping="6.78" actuatorfrcrange="-22 22"/>
-        <position ctrlrange="-3.14158 3.14158" kp="78"/>
+        <position ctrlrange="-3.14158 3.14158" kp="10"/>
       </default>
       <default class="wrist_angle">
         <joint range="-1.8675 2.23402" armature="0.008" damping="6.28"/>
-        <position ctrlrange="-1.8675 2.23402" kp="37"/>
+        <position ctrlrange="-1.8675 2.23402" kp="10"/>
       </default>
       <default class="wrist_rotate">
         <joint axis="1 0 0" range="-3.14158 3.14158" damping="1.2"/>
         <position ctrlrange="-3.14158 3.14158" kp="10.4"/>
       </default>
       <default class="finger">
-        <joint type="slide" armature="0.243" damping="40"/>
+        <joint type="slide" armature="0.243" damping="10"/>
         <!--
           The joint and control ranges are in meters, representing the linear displacement of the
           finger on the rail. Note that the real robot takes in a float value representing the

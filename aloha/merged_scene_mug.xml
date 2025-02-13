@@ -129,7 +129,7 @@
       <!-- <geom type="box" size=".05 .05 .05" contype="0" conaffinity="0" rgba=".3 .3 .6 .2" /> -->
     </body>
     <body>
-      <freejoint />
+      <joint name="object_free_joint" type="free"/>
       <body name="object">
         <geom name="mesh" mesh="mug" class="mug-visual"/>
         <geom name="collider_001" mesh="mug_collision_001" class="mug-collision"/>
@@ -151,7 +151,7 @@
         <geom name="collider_017" mesh="mug_collision_017" class="mug-collision"/>
         <geom name="collider_018" mesh="mug_collision_018" class="mug-collision"/>
       </body>
-       <site rgba="255 0 0 0" size="0.005" pos="0.075 0 0.075" name="handle_site"/>
+       <site rgba="255 0 0 255" size="0.005" pos="0.075 0 0.075" name="handle_site"/>
     </body>
   </worldbody>
 
