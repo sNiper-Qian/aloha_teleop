@@ -100,7 +100,7 @@ def close_gripper():
     """Gradually close the gripper."""
     data.ctrl[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "left/gripper")] = 0
 
-def move_arm(goal_pos, gripper_status):
+def move_arm(goal_pos, goal_rot, gripper_status):
     """Move the arm to a specified position."""
     # Get the current position of the arm
     left_gripper_pose = mink.SE3.from_mocap_name(model, data, "left/target")
@@ -109,6 +109,7 @@ def move_arm(goal_pos, gripper_status):
     # Set the goal position
     left_goal = left_gripper_pose.copy()
     left_goal.wxyz_xyz[4:] = goal_pos
+    left_goal.wxyz_xyz[:4] = np.roll(R.from_euler("xyz", goal_rot).as_quat(), shift=1)
     aloha_mink_wrapper.tasks[0].set_target(left_goal)
 
     right_goal = right_gripper_pose.copy()
@@ -220,8 +221,9 @@ if __name__ == "__main__":
             object_lifted = False
 
             current_gripper_status = 0
-            current_gripper_pose = mink.SE3.from_mocap_name(model, data, "left/target").copy()
-            goal_pos = current_gripper_pose.wxyz_xyz[4:].copy()
+            initial_gripper_pose = mink.SE3.from_mocap_name(model, data, "left/target").copy()
+            goal_pos = initial_gripper_pose.wxyz_xyz[4:].copy()
+            goal_rot = R.from_quat(initial_gripper_pose.wxyz_xyz[:4][[1, 2, 3, 0]]).as_euler("xyz").copy()
             try:
                 while viewer.is_running():
                     start = time.time()
@@ -241,8 +243,8 @@ if __name__ == "__main__":
                         aloha_mink_wrapper.tasks[2].set_target_from_configuration(aloha_mink_wrapper.configuration)
                         sample_object_position(data, model)
 
-                        current_gripper_pose = mink.SE3.from_mocap_name(model, data, "left/target").copy()
-                        goal_pos = current_gripper_pose.wxyz_xyz[4:].copy()
+                        initial_gripper_pose = mink.SE3.from_mocap_name(model, data, "left/target").copy()
+                        goal_pos = initial_gripper_pose.wxyz_xyz[4:].copy()
                         current_gripper_status = 1
                     
                     else:
@@ -251,16 +253,17 @@ if __name__ == "__main__":
                                 # cmd = udp_server.cmd_buffer.get()
                                 cmd = udp_server.latest_cmd
                                 print(cmd)
-                                goal_pos = cmd[:3] + current_gripper_pose.wxyz_xyz[4:]
+                                goal_pos = cmd[:3] * 1.5 + initial_gripper_pose.wxyz_xyz[4:]
                                 gripper_status = cmd[3]
                                 current_gripper_status = gripper_status
-                                gripper_rot = cmd[4]
-                                move_arm(goal_pos, gripper_status)
+                                gripper_rot = (cmd[4]) / 180 * np.pi
+                                goal_rot = np.array([0, gripper_rot, 0]) + R.from_quat(initial_gripper_pose.wxyz_xyz[:4][[1, 2, 3, 0]]).as_euler("xyz")
+                                move_arm(goal_pos, goal_rot, gripper_status)
                                 udp_server.latest_cmd = None
                                 ready_to_receive.set()
                                 ready_to_execute.clear()
                         else:
-                            move_arm(goal_pos, current_gripper_status)
+                            move_arm(goal_pos, goal_rot, current_gripper_status)
                         
                     # Compensate gravity
                     aloha_mink_wrapper.compensate_gravity([model.body("left/base_link").id, model.body("right/base_link").id])
