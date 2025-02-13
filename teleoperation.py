@@ -221,7 +221,7 @@ if __name__ == "__main__":
 
             current_gripper_status = 0
             current_gripper_pose = mink.SE3.from_mocap_name(model, data, "left/target").copy()
-            goal_pos = None
+            goal_pos = current_gripper_pose.wxyz_xyz[4:].copy()
             try:
                 while viewer.is_running():
                     start = time.time()
@@ -231,22 +231,36 @@ if __name__ == "__main__":
 
                     if not img_queue.full():
                         img_queue.put(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                    
+                    if check_object_lifted():
+                        print("Task complete. Reinitializing scene...")
 
-                    if ready_to_execute.is_set():
-                        if udp_server.latest_cmd is not None:
-                            # cmd = udp_server.cmd_buffer.get()
-                            cmd = udp_server.latest_cmd
-                            print(cmd)
-                            goal_pos = cmd[:3] + current_gripper_pose.wxyz_xyz[4:]
-                            gripper_status = cmd[3]
-                            current_gripper_status = gripper_status
-                            gripper_rot = cmd[4]
-                            move_arm(goal_pos, gripper_status)
-                            udp_server.latest_cmd = None
-                            ready_to_receive.set()
-                            ready_to_execute.clear()
+                        # Reinitialize the scene for the next task
+                        initialize_scene(data, model)
+
+                        aloha_mink_wrapper.tasks[2].set_target_from_configuration(aloha_mink_wrapper.configuration)
+                        sample_object_position(data, model)
+
+                        current_gripper_pose = mink.SE3.from_mocap_name(model, data, "left/target").copy()
+                        goal_pos = current_gripper_pose.wxyz_xyz[4:].copy()
+                        current_gripper_status = 1
+                    
                     else:
-                        move_arm(goal_pos, current_gripper_status)
+                        if ready_to_execute.is_set():
+                            if udp_server.latest_cmd is not None:
+                                # cmd = udp_server.cmd_buffer.get()
+                                cmd = udp_server.latest_cmd
+                                print(cmd)
+                                goal_pos = cmd[:3] + current_gripper_pose.wxyz_xyz[4:]
+                                gripper_status = cmd[3]
+                                current_gripper_status = gripper_status
+                                gripper_rot = cmd[4]
+                                move_arm(goal_pos, gripper_status)
+                                udp_server.latest_cmd = None
+                                ready_to_receive.set()
+                                ready_to_execute.clear()
+                        else:
+                            move_arm(goal_pos, current_gripper_status)
                         
                     # Compensate gravity
                     aloha_mink_wrapper.compensate_gravity([model.body("left/base_link").id, model.body("right/base_link").id])
