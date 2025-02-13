@@ -291,8 +291,8 @@ class RobotArmServer(MessageHandler):
     @handler(PoseStateMessage)
     async def handle_PoseStateMessage(self, session: Session, msg: PoseStateMessage, timestamp: float):
         # Convert (x,y,z) from ARKit -> (x,z,y) in robot frame
-        x = -msg.gripperDeltaPosition[0]    # robot X axis is to the right
-        y = msg.gripperDeltaPosition[2]   # robot Y axis is in front
+        x = -msg.gripperDeltaPosition[2]    # robot X axis is to the right
+        y = -msg.gripperDeltaPosition[0]   # robot Y axis is in front
         z = msg.gripperDeltaPosition[1]    # robot Z axis is up
 
         gripper_open_amount = msg.gripperOpenAmount
@@ -300,8 +300,8 @@ class RobotArmServer(MessageHandler):
         
         # send message in 10Hz
         if time.time() - self._last_sent > 0.1:
-            msg = np.array([x, y, z, gripper_open_amount, gripper_rotate_degrees], dtype=np.float32)
             print(f"Pose state: {msg}")
+            msg = np.array([x, y, z, gripper_open_amount, gripper_rotate_degrees], dtype=np.float32)
             self._udp_client.send(msg.tobytes())
             self._last_sent = time.time()
 
