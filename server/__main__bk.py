@@ -44,20 +44,7 @@ from .camera import CameraProcess
 from .dataset import DatasetWriter, read_dataset
 from .networking import Session, TCPClient, TCPServer, UDPServer, handler, MessageHandler
 from .robot import serial_ports, find_serial_port, ArmProcess, ArmObservation
-import socket
-import time
 
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 8006
-
-class UDPClient:
-    def __init__(self, server_ip, server_port):
-        self._ip = server_ip
-        self._port = server_port
-        self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    
-    def send(self, message):
-        self._socket.sendto(message, (self._ip, self._port))
 
 ####################################################################################################
 # Messages
@@ -156,6 +143,8 @@ class RobotArmServer(MessageHandler):
         self,
         tcp_port: int,
         udp_port: int,
+        arm_process: ArmProcess,
+        camera_process: CameraProcess,
         infer: bool,
         inference_endpoint: str,
         recording_dir: str | None,
@@ -170,6 +159,8 @@ class RobotArmServer(MessageHandler):
         self._inference_client = InferenceClient(queue=self._inference_queue, endpoint=inference_endpoint) if infer else None
         self._tcp_server = TCPServer(port=tcp_port, message_handler=self)
         self._udp_server = UDPServer(port=udp_port, message_handler=self)
+        self._arm_process = arm_process
+        self._camera_process = camera_process
         self._recording_dir = recording_dir
         self._dataset_writer = None
         self._replay_filepath = replay_filepath
@@ -178,9 +169,13 @@ class RobotArmServer(MessageHandler):
         self._infer_on_replay = infer_on_replay
 
         self._position = np.array([ 0, 5*2.54*1e-2, 9*2.54*1e-2 ])  # pretty close to 0 position
-
-        self._udp_client = UDPClient(SERVER_IP, SERVER_PORT)
-        self._last_sent = time.time()
+        arm_process.move_arm(
+            position=self._position,
+            gripper_open_amount=0,
+            gripper_rotate_degrees=0,
+            wait_for_frame=True # wait until completion
+        )
+        arm_process.set_camera_frame_provider(provider=camera_process.create_frame_provider())
 
     def _new_dataset_writer(self):
         return DatasetWriter(recording_dir=self._recording_dir, dataset_prefix="example", num_cameras=self._camera_process.num_cameras)
@@ -198,8 +193,7 @@ class RobotArmServer(MessageHandler):
         self._dataset_writer = None
 
     async def run(self):
-        # tasks = [ self._tcp_server.run(), self._udp_server.run(), self._run_replay_and_inference() ]
-        tasks = [ self._tcp_server.run(), self._udp_server.run()]
+        tasks = [ self._tcp_server.run(), self._udp_server.run(), self._run_replay_and_inference() ]
         if self._inference_client is not None:
             tasks.append(self._inference_client.run())
         await asyncio.gather(*tasks)
@@ -274,7 +268,6 @@ class RobotArmServer(MessageHandler):
 
     @handler(BeginEpisodeMessage)
     async def handle_BeginEpisodeMessage(self, session: Session, msg: BeginEpisodeMessage, timestamp: float):
-        print("Begin episode")
         if self._recording_dir is not None:
             if self._dataset_writer is None:
                 self._dataset_writer = self._new_dataset_writer()
@@ -282,7 +275,6 @@ class RobotArmServer(MessageHandler):
 
     @handler(EndEpisodeMessage)
     async def handle_EndEpisodeMessage(self, session: Session, msg: EndEpisodeMessage, timestamp: float):
-        print("End episode")
         if self._dataset_writer is not None:
             self._dataset_writer.finish()
             self._dataset_writer = None
@@ -291,19 +283,21 @@ class RobotArmServer(MessageHandler):
     @handler(PoseStateMessage)
     async def handle_PoseStateMessage(self, session: Session, msg: PoseStateMessage, timestamp: float):
         # Convert (x,y,z) from ARKit -> (x,z,y) in robot frame
-        x = -msg.gripperDeltaPosition[0]    # robot X axis is to the right
-        y = msg.gripperDeltaPosition[2]   # robot Y axis is in front
+        x = msg.gripperDeltaPosition[0]    # robot X axis is to the right
+        y = -msg.gripperDeltaPosition[2]   # robot Y axis is in front
         z = msg.gripperDeltaPosition[1]    # robot Z axis is up
+        delta_position = np.array([ x, y, z ])
 
-        gripper_open_amount = msg.gripperOpenAmount
-        gripper_rotate_degrees = msg.gripperRotateDegrees
-        
-        # send message in 10Hz
-        if time.time() - self._last_sent > 0.1:
-            msg = np.array([x, y, z, gripper_open_amount, gripper_rotate_degrees], dtype=np.float32)
-            print(f"Pose state: {msg}")
-            self._udp_client.send(msg.tobytes())
-            self._last_sent = time.time()
+        # Move arm if it is not busy
+        if not self._arm_process.is_busy():
+            position = self._position + delta_position
+            observation = self._arm_process.move_arm(
+                position=position,
+                gripper_open_amount=msg.gripperOpenAmount,
+                gripper_rotate_degrees=msg.gripperRotateDegrees,
+                wait_for_frame=True
+            )
+            self._record_observation(observation=observation)
 
 
 ####################################################################################################
@@ -344,10 +338,16 @@ if __name__ == "__main__":
 
     camera_idxs = [ int(camera_idx) for camera_idx in options.camera.split(",") ]
 
+    serial_port = get_serial_port()
+    arm_process = ArmProcess(serial_port=serial_port)
+    camera_process = CameraProcess(camera_idxs=camera_idxs)
+
     tasks = []
     server = RobotArmServer(
         tcp_port=options.server_port,
         udp_port=options.server_port,
+        arm_process=arm_process,
+        camera_process=camera_process,
         infer=options.infer,
         inference_endpoint=options.inference_endpoint,
         recording_dir=options.record_to,
