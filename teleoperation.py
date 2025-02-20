@@ -16,6 +16,7 @@ import copy
 import socket
 import time
 from threading import Event
+from filter import OneEuroFilter
 
 ready_to_receive = Event()
 ready_to_execute = Event()
@@ -36,10 +37,13 @@ class UDPServer:
     
     def start(self):
         self._running = True
-        threading.Thread(target=self._listen).start()
+        self.thread = threading.Thread(target=self._listen)
+        self.thread.start()
     
     def stop(self):
         self._running = False
+        # kill the thread
+        self.thread.join()
         self._socket.close()
     
     def _listen(self):
@@ -71,7 +75,7 @@ _HERE = Path(__file__).parent
 _XML = _HERE / "aloha" / "merged_scene_mug.xml"
 theta = 0
 
-def sample_object_position(data, model, x_range=(-0.075, 0.075), y_range=(-0.075, 0.075), yaw_range=(-np.pi / 4, np.pi / 4)):
+def sample_object_position(data, model, x_range=(-0.075, 0.075), y_range=(-0.075, 0.075), yaw_range=(-np.pi / 2, np.pi / 2)):
     """Randomize the object's position in the scene for a free joint."""
     global theta
     # Get the free joint ID (first free joint in the system)
@@ -109,7 +113,8 @@ def move_arm(goal_pos, goal_rot, gripper_status):
     # Set the goal position
     left_goal = left_gripper_pose.copy()
     left_goal.wxyz_xyz[4:] = goal_pos
-    left_goal.wxyz_xyz[:4] = np.roll(R.from_euler("xyz", goal_rot).as_quat(), shift=1)
+    left_goal.wxyz_xyz[:4] = R.from_euler("xyz", goal_rot).as_quat()[[3, 0, 1, 2]]
+    print(left_goal.wxyz_xyz[:4])
     aloha_mink_wrapper.tasks[0].set_target(left_goal)
 
     right_goal = right_gripper_pose.copy()
@@ -213,7 +218,10 @@ if __name__ == "__main__":
             aloha_mink_wrapper.tasks[2].set_target_from_configuration(aloha_mink_wrapper.configuration)
 
             # Rate limiter for fixed update frequency
-            rate = RateLimiter(frequency=100, warn=False)
+            rate = RateLimiter(frequency=25, warn=False)
+
+            # Filter for smoothing the gripper commands
+            filter = OneEuroFilter(min_cutoff=0.01, beta=10.0)
 
             pre_grasped = False
             has_grasped = False
@@ -252,17 +260,20 @@ if __name__ == "__main__":
                             if udp_server.latest_cmd is not None:
                                 # cmd = udp_server.cmd_buffer.get()
                                 cmd = udp_server.latest_cmd
-                                print(cmd)
                                 goal_pos = cmd[:3] * 1.5 + initial_gripper_pose.wxyz_xyz[4:]
                                 gripper_status = cmd[3]
-                                current_gripper_status = gripper_status
+                                current_gripper_status = min(2 * gripper_status, 1)
                                 gripper_rot = (cmd[4]) / 180 * np.pi
                                 goal_rot = np.array([0, gripper_rot, 0]) + R.from_quat(initial_gripper_pose.wxyz_xyz[:4][[1, 2, 3, 0]]).as_euler("xyz")
+                                t = time.time()
+                                goal_pos = filter(t, goal_pos)
                                 move_arm(goal_pos, goal_rot, gripper_status)
                                 udp_server.latest_cmd = None
                                 ready_to_receive.set()
                                 ready_to_execute.clear()
                         else:
+                            t = time.time()
+                            goal_pos = filter(t, goal_pos)
                             move_arm(goal_pos, goal_rot, current_gripper_status)
                         
                     # Compensate gravity

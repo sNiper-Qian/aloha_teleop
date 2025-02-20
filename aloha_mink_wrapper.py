@@ -36,16 +36,16 @@ class AlohaMinkWrapper:
             mink.FrameTask(
                 frame_name="left/gripper",
                 frame_type="site",
-                position_cost=1.0,
-                orientation_cost=0.2,
-                lm_damping=1.0,
+                position_cost=0.3,
+                orientation_cost=0.3,
+                lm_damping=1e-4,
             ),
             mink.FrameTask(
                 frame_name="right/gripper",
                 frame_type="site",
-                position_cost=1.0,
-                orientation_cost=0.2,
-                lm_damping=1.0,
+                position_cost=0.3,
+                orientation_cost=0.3,
+                lm_damping=1e-4,
             ),
             mink.PostureTask(self.model, cost=1e-4),
         ]
@@ -109,7 +109,7 @@ class AlohaMinkWrapper:
                 rate_dt,
                 solver,
                 limits=self.limits,
-                damping=1e-5,
+                damping=1e-4,
             )
             self.configuration.integrate_inplace(vel, rate_dt)
 
